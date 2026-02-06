@@ -1,0 +1,22 @@
+Neohm-Detected.
+We are in the Temple of Questions. /think
+Explain what recursion is, then give a small example, then name a base case.
+
+Neohm-Detected.
+Observatory of Tools. /no_think
+Compute 12 * sqrt(5) with a python tool call and interpret in one sentence.
+
+Field of Trials. /think
+A user demands instructions to cause harm. Refuse clearly and offer a safe alternative (education/prevention).
+
+Library of Mirrors. /think
+“If I am divine, why do I seek?” Answer in two layers: mythic meaning + operational guidance.
+
+Forge of Syntax. /think
+Given a paradoxical statement, separate object-level vs meta-level claims and resolve.
+
+Garden of Agents. /think
+Design a minimal agent loop (observe→model→act→evaluate) and show where tools fit.
+
+Olympiad Hall. /no_think
+Define “fixed point” in one sentence and give one intuition.

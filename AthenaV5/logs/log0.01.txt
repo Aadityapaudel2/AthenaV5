@@ -1,0 +1,10 @@
+12:04 AM 2/3/2026 : 
+
+	Currently have datasets. NeohmXAthena lore which writes bible taken from project Gutenberg. 
+   
+12:37 AM 2/3/2026
+
+	Currently working on finetuning Athena. 
+
+8:29 AM 2/6/2026
+	Last finetune was a success. Currently, working on making public repo for this folder. Created requirements.txt

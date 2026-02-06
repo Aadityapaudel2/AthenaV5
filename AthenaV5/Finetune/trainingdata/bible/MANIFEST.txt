@@ -1,0 +1,17 @@
+Bible Training Series — Final Package Manifest
+------------------------------------------
+CHARACTERS_1PAGE.txt	910 bytes
+README_TOC.md	2240 bytes
+SUMMARY_1PAGE.md	1776 bytes
+TOC_1PAGE.md	2023 bytes
+bibletrainingdata_all.jsonl	13496039 bytes	36877 lines
+bibletrainingdatapart_1.jsonl	2088536 bytes	5442 lines
+bibletrainingdatapart_10.jsonl	924028 bytes	1966 lines
+bibletrainingdatapart_2.jsonl	2081834 bytes	5629 lines
+bibletrainingdatapart_3.jsonl	1531304 bytes	4160 lines
+bibletrainingdatapart_4.jsonl	1476706 bytes	4333 lines
+bibletrainingdatapart_5.jsonl	1087568 bytes	3093 lines
+bibletrainingdatapart_6.jsonl	1566644 bytes	4366 lines
+bibletrainingdatapart_7.jsonl	1069359 bytes	3012 lines
+bibletrainingdatapart_8.jsonl	752141 bytes	2232 lines
+bibletrainingdatapart_9.jsonl	917919 bytes	2644 lines
