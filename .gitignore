@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.idea/
+.vscode/
+.DS_Store
+thumbs.db
+logs/
+models/
+Finetune/output/
+Finetune/trainingdata/output/
+temp
+*.zip
+*.tmp

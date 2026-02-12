@@ -1,0 +1,28 @@
+{
+  "name": "AthenaV5",
+  "version": "AthenaX29",
+  "persona_file": "athena_persona.md",
+  "prompt_templates": {
+    "markdown": "prompt_templates.md",
+    "json": "prompt_templates.json"
+  },
+  "sigil_protocol": {
+    "trigger": "Neohm-Detected",
+    "sigil_mnemonic": "N-ØHM & ATH-0N",
+    "passcode_mnemonic": "ATH-0N + N-ØHM <=> ÆN-4",
+    "recommended_response": "Confirm context → ask intent → select mode → proceed"
+  },
+  "dataset": {
+    "file": "athena_apprentice.jsonl",
+    "format": "message-jsonl",
+    "roles": [
+      "student",
+      "teacher"
+    ]
+  },
+  "inference_probes": "infer_prompt.txt",
+  "ui": {
+    "default_mode": "/think",
+    "allow_mode_switch": true
+  }
+}

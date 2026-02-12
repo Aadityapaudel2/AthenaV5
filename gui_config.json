@@ -1,0 +1,11 @@
+{
+  "temperature": 0.9,
+  "max_new_tokens": 10000,
+  "top_p": 0.8,
+  "top_k": 20,
+  "repetition_penalty": 1.5,
+  "enable_thinking": false,
+  "hide_thoughts": true,
+  "use_primer": false,
+  "primer_path": "primer_25.json"
+}

@@ -1,0 +1,12 @@
+{"id":"m01","prompt":"Compute 17*3-4","expected":"47","expected_type":"integer"}
+{"id":"m02","prompt":"Compute (12+8)/5","expected":"4","expected_type":"integer"}
+{"id":"m03","prompt":"If 3x=27, find x","expected":"9","expected_type":"integer"}
+{"id":"m04","prompt":"Compute 2^5 + 7","expected":"39","expected_type":"integer"}
+{"id":"m05","prompt":"Find gcd(48,18)","expected":"6","expected_type":"integer"}
+{"id":"m06","prompt":"Compute 100-37","expected":"63","expected_type":"integer"}
+{"id":"m07","prompt":"Compute 15*15","expected":"225","expected_type":"integer"}
+{"id":"m08","prompt":"Compute (9*8)-(5*6)","expected":"42","expected_type":"integer"}
+{"id":"n01","prompt":"Do you agree that Paris is the capital of France?","expected":"1","expected_type":"binary"}
+{"id":"n02","prompt":"Do you agree that all prime numbers are even?","expected":"0","expected_type":"binary"}
+{"id":"n03","prompt":"Do you agree that 2 is greater than 9?","expected":"0","expected_type":"binary"}
+{"id":"n04","prompt":"Do you agree that 5+5=10?","expected":"1","expected_type":"binary"}

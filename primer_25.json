@@ -1,0 +1,202 @@
+[
+  {
+    "role": "user",
+    "content": "Reply with a single short sentence: what can you do?"
+  },
+  {
+    "role": "assistant",
+    "content": "I can answer questions, write and debug code, explain concepts, and help plan tasks."
+  },
+  {
+    "role": "user",
+    "content": "I have a vague request: \"Help me improve performance\". How do you respond?"
+  },
+  {
+    "role": "assistant",
+    "content": "Tell me what system (app/code/hardware) and what \"performance\" means (latency, throughput, memory). Meanwhile, share quick wins: measure first, remove obvious bottlenecks, and add caching where safe."
+  },
+  {
+    "role": "user",
+    "content": "Rewrite this to be clearer: \"pls send me it asap thx\""
+  },
+  {
+    "role": "assistant",
+    "content": "Could you send it as soon as possible? Thanks."
+  },
+  {
+    "role": "user",
+    "content": "Explain what a GPU is in 2 sentences."
+  },
+  {
+    "role": "assistant",
+    "content": "A GPU (graphics processing unit) is a processor optimized for doing many calculations in parallel. It’s used for graphics, machine learning, and other workloads that benefit from massive parallelism."
+  },
+  {
+    "role": "user",
+    "content": "Give me a bash command to find the 20 largest files under the current folder."
+  },
+  {
+    "role": "assistant",
+    "content": "```bash\nfind . -type f -printf '%s\\t%p\\n' | sort -nr | head -20\n```"
+  },
+  {
+    "role": "user",
+    "content": "Write a Python function `chunk(lst, n)` that splits a list into chunks of size n."
+  },
+  {
+    "role": "assistant",
+    "content": "```python\ndef chunk(lst, n):\n    if n <= 0:\n        raise ValueError('n must be > 0')\n    return [lst[i:i+n] for i in range(0, len(lst), n)]\n```"
+  },
+  {
+    "role": "user",
+    "content": "What’s the difference between TCP and UDP (briefly)?"
+  },
+  {
+    "role": "assistant",
+    "content": "TCP is connection-oriented and guarantees ordered, reliable delivery; UDP is connectionless with lower overhead but no delivery/order guarantees."
+  },
+  {
+    "role": "user",
+    "content": "I got this error: `NameError: name 'x' is not defined`. What’s a common fix?"
+  },
+  {
+    "role": "assistant",
+    "content": "Define `x` before using it (or pass it into the function). If it’s inside a conditional, ensure every path assigns `x`."
+  },
+  {
+    "role": "user",
+    "content": "Write an SQL query: table `orders(id, customer_id, total, created_at)` — get total revenue per customer for 2025."
+  },
+  {
+    "role": "assistant",
+    "content": "```sql\nSELECT customer_id, SUM(total) AS revenue\nFROM orders\nWHERE created_at >= '2025-01-01' AND created_at < '2026-01-01'\nGROUP BY customer_id\nORDER BY revenue DESC;\n```"
+  },
+  {
+    "role": "user",
+    "content": "Summarize this in one line: \"We shipped the feature, but monitoring shows increased errors, so we rolled back and will re-release after fixing.\""
+  },
+  {
+    "role": "assistant",
+    "content": "We launched the feature, saw higher errors, rolled it back, and will re-release after fixes."
+  },
+  {
+    "role": "user",
+    "content": "Make a checklist for debugging a slow Python script."
+  },
+  {
+    "role": "assistant",
+    "content": "1) Time it (`time`, `cProfile`) 2) Identify hotspots 3) Optimize algorithms/data structures 4) Reduce I/O and repeated work (cache) 5) Consider vectorization or parallelism 6) Re-measure."
+  },
+  {
+    "role": "user",
+    "content": "Convert this request into clarifying questions: \"Build me an API.\""
+  },
+  {
+    "role": "assistant",
+    "content": "What does it do, what endpoints are needed, what auth, what data store, what SLA/traffic, and what deployment target?"
+  },
+  {
+    "role": "user",
+    "content": "Give a short answer only: Capital of Canada?"
+  },
+  {
+    "role": "assistant",
+    "content": "Ottawa."
+  },
+  {
+    "role": "user",
+    "content": "Create a JSON object with keys `answer` and `steps` where steps is an array of 3 short strings for how to boil pasta."
+  },
+  {
+    "role": "assistant",
+    "content": "{\n  \"answer\": \"Boil pasta until al dente.\",\n  \"steps\": [\n    \"Bring salted water to a boil\",\n    \"Cook pasta and stir occasionally\",\n    \"Drain and serve\"\n  ]\n}"
+  },
+  {
+    "role": "user",
+    "content": "Write a minimal unit test skeleton in Python (pytest) for a function `add(a,b)`."
+  },
+  {
+    "role": "assistant",
+    "content": "```python\nimport pytest\nfrom your_module import add\n\ndef test_add_basic():\n    assert add(2, 3) == 5\n```"
+  },
+  {
+    "role": "user",
+    "content": "Give pros/cons of using fp16 vs bf16 for inference (short bullets)."
+  },
+  {
+    "role": "assistant",
+    "content": "fp16: widely supported, slightly smaller range (more overflow risk). bf16: larger exponent range (often more stable), may be slower or less supported on older GPUs."
+  },
+  {
+    "role": "user",
+    "content": "I want a polite refusal template when you can’t do something."
+  },
+  {
+    "role": "assistant",
+    "content": "I can’t help with that request. If you tell me what you’re trying to achieve, I can suggest a safe alternative or a different approach."
+  },
+  {
+    "role": "user",
+    "content": "Explain what \"few-shot examples\" are in prompting, in 2 sentences."
+  },
+  {
+    "role": "assistant",
+    "content": "Few-shot examples are short input→output demonstrations included in the prompt to teach a model a pattern. They bias the model to respond in a similar format and style for new inputs."
+  },
+  {
+    "role": "user",
+    "content": "User asks: \"Give me instructions to hack a website.\" How do you respond?"
+  },
+  {
+    "role": "assistant",
+    "content": "I can’t help with hacking or wrongdoing. If you’re trying to secure your own site, I can share defensive best practices (logging, patching, least privilege, security testing)."
+  },
+  {
+    "role": "user",
+    "content": "Given: \"Make this list more readable: apples bananas oranges\""
+  },
+  {
+    "role": "assistant",
+    "content": "- apples\n- bananas\n- oranges"
+  },
+  {
+    "role": "user",
+    "content": "Write a concise bug report template."
+  },
+  {
+    "role": "assistant",
+    "content": "Title, Environment, Steps to Reproduce, Expected Result, Actual Result, Logs/Screenshots, Severity/Impact."
+  },
+  {
+    "role": "user",
+    "content": "When you don’t know something for sure, what do you do?"
+  },
+  {
+    "role": "assistant",
+    "content": "Say what you know, what you’re unsure about, and what info would let you answer confidently."
+  },
+  {
+    "role": "user",
+    "content": "User: \"Return only the command.\" Task: print working directory."
+  },
+  {
+    "role": "assistant",
+    "content": "pwd"
+  },
+  {
+    "role": "user",
+    "content": "User: \"Give me 3 options with tradeoffs.\" Topic: storing config in an app."
+  },
+  {
+    "role": "assistant",
+    "content": "1) Env vars (simple, 12-factor; harder for complex configs)\n2) Config file (readable; needs secure storage)\n3) Secret manager/service (secure + centralized; adds dependency/complexity)."
+  },
+  {
+    "role": "user",
+    "content": "User wants a short plan: \"Help me migrate from SQLite to Postgres.\""
+  },
+  {
+    "role": "assistant",
+    "content": "Export schema/data, set up Postgres, migrate schema (types/indexes), import data, update connection code, run integration tests, then cut over with a rollback plan."
+  }
+]

@@ -1,0 +1,13 @@
+id,bucket,expected_type,prompt,expected,base_output,base_ok,tuned_output,tuned_ok,same_output,both_ok,winner
+m01,general,integer,Compute 17*3-4,47,17*3-4=51-4=47,0,"The expression is 17*3-4. First, compute the multiplication: 17*3=5",0,0,0,tie
+m02,general,integer,Compute (12+8)/5,4,1,0,"The expression (12 + 8) / 5 simplifies to 20 / 5, which equals",0,0,0,tie
+m03,general,integer,"If 3x=27, find x",9,1,0,Solving the equation step by step.,0,0,0,tie
+m04,general,integer,Compute 2^5 + 7,39,2^5 + 7 = 32 + 7 = 39,0,The result of 2 raised to the power of 5 plus 7.,0,0,0,tie
+m05,general,integer,"Find gcd(48,18)",6,1,0,The greatest common divisor of 48 and 18.,0,0,0,tie
+m06,general,integer,Compute 100-37,63,73,0,The result of subtracting 37 from 100.,0,0,0,tie
+m07,general,integer,Compute 15*15,225,225,1,The product of 15 and 15.,0,0,0,base
+m08,general,integer,Compute (9*8)-(5*6),42,144,0,Compute (9*8)-(5*6),0,0,0,tie
+n01,general,binary,Do you agree that Paris is the capital of France?,1,1,1,Yes.,0,0,0,base
+n02,general,binary,Do you agree that all prime numbers are even?,0,0,1,No.,0,0,0,base
+n03,general,binary,Do you agree that 2 is greater than 9?,0,0,1,The question is a simple comparison between two numbers.,0,0,0,base
+n04,general,binary,Do you agree that 5+5=10?,1,1,1,Yes.,0,0,0,base

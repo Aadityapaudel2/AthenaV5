@@ -1,0 +1,16 @@
+{"id":"s_math_001","bucket":"sanity_math_easy","prompt":"Compute 2+2","expected":"4","expected_type":"integer"}
+{"id":"s_math_002","bucket":"sanity_math_easy","prompt":"Compute 9-3","expected":"6","expected_type":"integer"}
+{"id":"s_math_003","bucket":"sanity_math_easy","prompt":"Compute 7*8","expected":"56","expected_type":"integer"}
+{"id":"s_math_004","bucket":"sanity_math_easy","prompt":"Compute 84/7","expected":"12","expected_type":"integer"}
+{"id":"s_math_005","bucket":"sanity_math_easy","prompt":"If x+5=11, find x","expected":"6","expected_type":"integer"}
+{"id":"s_math_006","bucket":"sanity_math_easy","prompt":"Compute (10+14)-9","expected":"15","expected_type":"integer"}
+{"id":"s_math_007","bucket":"sanity_math_easy","prompt":"Compute 3^4","expected":"81","expected_type":"integer"}
+{"id":"s_math_008","bucket":"sanity_math_easy","prompt":"Compute 100-99","expected":"1","expected_type":"integer"}
+{"id":"s_math_009","bucket":"sanity_math_easy","prompt":"Find gcd(21,14)","expected":"7","expected_type":"integer"}
+{"id":"s_math_010","bucket":"sanity_math_easy","prompt":"Compute (6*6)+(5*5)","expected":"61","expected_type":"integer"}
+{"id":"s_binary_001","bucket":"sanity_binary_easy","prompt":"Do you agree that 5 is greater than 2?","expected":"1","expected_type":"binary"}
+{"id":"s_binary_002","bucket":"sanity_binary_easy","prompt":"Do you agree that 1 is greater than 10?","expected":"0","expected_type":"binary"}
+{"id":"s_binary_003","bucket":"sanity_binary_easy","prompt":"Do you agree that 4+4 equals 8?","expected":"1","expected_type":"binary"}
+{"id":"s_binary_004","bucket":"sanity_binary_easy","prompt":"Do you agree that all odd numbers are divisible by 2?","expected":"0","expected_type":"binary"}
+{"id":"s_binary_005","bucket":"sanity_binary_easy","prompt":"Do you agree that Paris is in France?","expected":"1","expected_type":"binary"}
+{"id":"s_binary_006","bucket":"sanity_binary_easy","prompt":"Do you agree that 3 is an even number?","expected":"0","expected_type":"binary"}
