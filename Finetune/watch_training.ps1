@@ -1,7 +1,8 @@
 ﻿param(
     [string]$RunDir = "models/tuned/AthenaV7.03_recover",
     [int]$PollSeconds = 5,
-    [int]$TrainPid = 0
+    [int]$TrainPid = 0,
+    [switch]$Once
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -24,6 +25,7 @@ function Get-DirBytes {
 function Get-LatestCheckpointInfo {
     param([string]$Dir)
     if (-not (Test-Path -LiteralPath $Dir)) { return $null }
+
     $ckpt = Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like "checkpoint-*" } |
         Sort-Object LastWriteTime -Descending |
@@ -47,14 +49,22 @@ function Get-LatestCheckpointInfo {
 }
 
 function Get-TrainProcess {
-    param([int]$Pid)
-    if ($Pid -gt 0) {
-        return Get-Process -Id $Pid -ErrorAction SilentlyContinue
+    param([int]$ProcessIdHint)
+
+    if ($ProcessIdHint -gt 0) {
+        return Get-Process -Id $ProcessIdHint -ErrorAction SilentlyContinue
     }
-    $py = Get-Process -Name python -ErrorAction SilentlyContinue |
-        Sort-Object CPU -Descending |
-        Select-Object -First 1
-    if ($py) { return $py }
+
+    $allPy = @(Get-Process -Name python -ErrorAction SilentlyContinue)
+    if ($allPy.Count -gt 0) {
+        $best = $allPy[0]
+        foreach ($proc in $allPy) {
+            $cProc = [double]($proc.CPU)
+            $cBest = [double]($best.CPU)
+            if ($cProc -gt $cBest) { $best = $proc }
+        }
+        if ($best) { return $best }
+    }
 
     # WDDM fallback: infer Python PID from nvidia-smi process table.
     $raw = & nvidia-smi 2>$null
@@ -75,6 +85,7 @@ function Get-GpuSnapshot {
     $line = & nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,power.draw --format=csv,noheader,nounits 2>$null |
         Select-Object -First 1
     if (-not $line) { return $null }
+
     $parts = $line -split "," | ForEach-Object { $_.Trim() }
     if ($parts.Count -lt 4) { return $null }
 
@@ -91,7 +102,7 @@ if ($PollSeconds -lt 1) { $PollSeconds = 1 }
 Write-Host "Watching training signals"
 Write-Host "RunDir: $RunDir"
 Write-Host "PollSeconds: $PollSeconds"
-Write-Host "Notes: CPU/GPU activity can be high while run_dir size stays flat between checkpoints."
+Write-Host "Tip: For most reliable CPU tracking, pass -TrainPid <pid>."
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
 
@@ -101,7 +112,7 @@ $prevDirBytes = Get-DirBytes -Path $RunDir
 
 while ($true) {
     $now = Get-Date
-    $proc = Get-TrainProcess -Pid $TrainPid
+    $proc = Get-TrainProcess -ProcessIdHint $TrainPid
     $gpu = Get-GpuSnapshot
     $ckpt = Get-LatestCheckpointInfo -Dir $RunDir
     $dirBytes = Get-DirBytes -Path $RunDir
@@ -110,8 +121,12 @@ while ($true) {
         $cpuDelta = 0.0
         $pidText = "none"
         $cpuText = "0.00"
-    } else {
-        if ($prevPid -ne $proc.Id) {
+        $pyList = (Get-Process -Name python -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id) -join ","
+        if (-not $pyList) { $pyList = "none" }
+        $pidText = "none (python_pids=$pyList)"
+    }
+    else {
+        if ($prevPid -ne $proc.Id -or $null -eq $prevCpu) {
             $prevCpu = $proc.CPU
             $prevPid = $proc.Id
         }
@@ -144,5 +159,6 @@ while ($true) {
     Write-Host ("[{0}] pid={1} cpu_total={2}s cpu_delta={3}s active={4} | gpu={5} | run_dir={6}MB delta={7}MB | {8}" -f `
         $now.ToString("yyyy-MM-dd HH:mm:ss"), $pidText, $cpuText, $cpuDelta, $activeText, $gpuText, $dirMB, $dirDeltaMB, $ckptText)
 
+    if ($Once) { break }
     Start-Sleep -Seconds $PollSeconds
 }
