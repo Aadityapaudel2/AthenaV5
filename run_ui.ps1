@@ -11,249 +11,116 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$VenvLocal = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-$VenvWorkspace = Join-Path (Split-Path -Parent $ProjectRoot) ".venv\Scripts\python.exe"
-$LogsDir = Join-Path $ProjectRoot "logs"
-$UiEventsLog = Join-Path $LogsDir "ui_events.jsonl"
-$BootstrapStatePath = Join-Path $LogsDir "bootstrap_state.json"
+$QtUi = Join-Path $ProjectRoot "qt_ui.py"
+$TkUi = Join-Path $ProjectRoot "ui.py"
+$BootstrapScript = Join-Path $ProjectRoot "scripts\bootstrap_mathjax.ps1"
+$Requirements = Join-Path $ProjectRoot "requirements.txt"
 
-try {
-    New-Item -ItemType Directory -Path $LogsDir -Force | Out-Null
-} catch {
-    # Non-fatal.
-}
-
-function Write-BootstrapInfo {
-    param([string]$Message)
-    if ($BootstrapVerbose) {
-        Write-Host "[bootstrap] $Message"
-    }
-}
-
-function Add-UiEvent {
-    param(
-        [Parameter(Mandatory = $true)][string]$Event,
-        [Parameter(Mandatory = $true)][string]$Mode,
-        [string]$ModelDir = "",
-        [hashtable]$Details = @{}
+function Resolve-PythonExe {
+    $Candidates = @(
+        (Join-Path $ProjectRoot ".venv\Scripts\python.exe"),
+        (Join-Path (Split-Path -Parent $ProjectRoot) ".venv\Scripts\python.exe")
     )
-    try {
-        $payload = [ordered]@{
-            timestamp = [DateTime]::UtcNow.ToString("o")
-            event     = $Event
-            mode      = $Mode
-            model_dir = $ModelDir
-            details   = $Details
+    foreach ($Candidate in $Candidates) {
+        if (Test-Path -LiteralPath $Candidate) {
+            return (Resolve-Path -LiteralPath $Candidate).Path
         }
-        Add-Content -LiteralPath $UiEventsLog -Value ($payload | ConvertTo-Json -Compress -Depth 8)
-    } catch {
-        # Best effort only.
     }
-}
-
-function Write-BootstrapState {
-    param([Parameter(Mandatory = $true)][hashtable]$State)
-    try {
-        $State.timestamp = [DateTime]::UtcNow.ToString("o")
-        Set-Content -LiteralPath $BootstrapStatePath -Value ($State | ConvertTo-Json -Depth 8)
-    } catch {
-        # Diagnostics only.
+    $PythonCmd = Get-Command python -ErrorAction SilentlyContinue
+    if ($PythonCmd) {
+        return $PythonCmd.Source
     }
+    throw "No Python runtime found. Activate/create a venv first."
 }
 
-if (Test-Path -LiteralPath $VenvLocal) {
-    $PythonExe = (Resolve-Path -LiteralPath $VenvLocal).Path
-} elseif (Test-Path -LiteralPath $VenvWorkspace) {
-    $PythonExe = (Resolve-Path -LiteralPath $VenvWorkspace).Path
-} else {
-    throw "No venv python found. Expected either: $VenvLocal or $VenvWorkspace"
-}
-
-function Test-QtWebUiDeps {
-    param([Parameter(Mandatory = $true)][string]$PythonExe)
-    $QuotedPython = '"' + $PythonExe + '"'
-    $ImportProbe = $QuotedPython + ' -c "import PySide6; from PySide6.QtWebEngineWidgets import QWebEngineView" >nul 2>nul'
-    cmd.exe /d /c $ImportProbe | Out-Null
-    Write-BootstrapInfo "Qt dependency probe exit code=$LASTEXITCODE"
+function Test-QtDeps {
+    param([string]$PythonExe)
+    & $PythonExe -c "import PySide6; from PySide6.QtWebEngineWidgets import QWebEngineView" 1>$null 2>$null
     return ($LASTEXITCODE -eq 0)
 }
 
-function Install-QtDeps {
-    param(
-        [Parameter(Mandatory = $true)][string]$PythonExe,
-        [Parameter(Mandatory = $true)][string]$RequirementsPath
-    )
-    Add-UiEvent -Event "deps_install_attempt" -Mode "qt-web" -Details @{ method = "requirements"; requirements = $RequirementsPath }
-    if (Test-Path -LiteralPath $RequirementsPath) {
-        & $PythonExe -m pip install --disable-pip-version-check -r $RequirementsPath
-        $ExitCode = $LASTEXITCODE
-        Add-UiEvent -Event "deps_install_result" -Mode "qt-web" -Details @{ method = "requirements"; success = ($ExitCode -eq 0); exit_code = $ExitCode }
-        if ($ExitCode -eq 0) {
-            return $true
-        }
+function Install-UiDeps {
+    param([string]$PythonExe)
+    if (Test-Path -LiteralPath $Requirements) {
+        & $PythonExe -m pip install --disable-pip-version-check -r $Requirements
+    } else {
+        & $PythonExe -m pip install --disable-pip-version-check PySide6 PySide6-Addons markdown-it-py
     }
-
-    # Recovery path: UI essentials only.
-    Add-UiEvent -Event "deps_install_attempt" -Mode "qt-web" -Details @{ method = "ui-only" }
-    & $PythonExe -m pip install --disable-pip-version-check markdown-it-py PySide6 PySide6-Addons
-    $UiOnlyExit = $LASTEXITCODE
-    Add-UiEvent -Event "deps_install_result" -Mode "qt-web" -Details @{ method = "ui-only"; success = ($UiOnlyExit -eq 0); exit_code = $UiOnlyExit }
-    return ($UiOnlyExit -eq 0)
+    return ($LASTEXITCODE -eq 0)
 }
 
 function Invoke-MathJaxBootstrap {
-    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
-    $BootstrapScript = Join-Path $ProjectRoot "scripts\bootstrap_mathjax.ps1"
-    if (-not (Test-Path -LiteralPath $BootstrapScript)) {
-        Write-Warning "MathJax bootstrap script missing: $BootstrapScript"
-        return $false
-    }
-
-    Add-UiEvent -Event "mathjax_bootstrap_attempt" -Mode "qt-web" -Details @{ script = $BootstrapScript }
+    if ($NoMathJaxBootstrap) { return }
+    if (-not (Test-Path -LiteralPath $BootstrapScript)) { return }
+    if ($BootstrapVerbose) { Write-Host "[bootstrap] running MathJax bootstrap..." }
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $BootstrapScript -ProjectRoot $ProjectRoot
-    $ExitCode = $LASTEXITCODE
-    Add-UiEvent -Event "mathjax_bootstrap_result" -Mode "qt-web" -Details @{ success = ($ExitCode -eq 0); exit_code = $ExitCode }
-    return ($ExitCode -eq 0)
 }
 
-$QtUiPy = Join-Path $ProjectRoot "qt_ui.py"
-$TkUiPy = Join-Path $ProjectRoot "ui.py"
-$UiPy = if ($LegacyTk) { $TkUiPy } else { $QtUiPy }
-if (-not (Test-Path -LiteralPath $UiPy)) {
-    throw "UI entrypoint not found: $UiPy"
+$PythonExe = Resolve-PythonExe
+$LaunchTk = [bool]$LegacyTk
+$ExitCode = 0
+$ResolvedModelDir = ""
+if ($ModelDir -and $ModelDir.Trim().Length -gt 0) {
+    $Candidate = if ([System.IO.Path]::IsPathRooted($ModelDir)) { $ModelDir } else { Join-Path $ProjectRoot $ModelDir }
+    if (-not (Test-Path -LiteralPath $Candidate)) {
+        throw "Model path not found: $Candidate"
+    }
+    $ResolvedModelDir = (Resolve-Path -LiteralPath $Candidate).Path
 }
 
-if (-not $LegacyTk) {
-    $RequirementsPath = Join-Path $ProjectRoot "requirements.txt"
-    $QtReady = Test-QtWebUiDeps -PythonExe $PythonExe
-    Add-UiEvent -Event "deps_check" -Mode "qt-web" -Details @{ success = $QtReady; no_auto_install = [bool]$NoAutoInstallDeps }
-
-    if (-not $QtReady -and -not $NoAutoInstallDeps) {
-        $null = Install-QtDeps -PythonExe $PythonExe -RequirementsPath $RequirementsPath
-        $QtReady = Test-QtWebUiDeps -PythonExe $PythonExe
-        Add-UiEvent -Event "deps_check" -Mode "qt-web" -Details @{ success = $QtReady; after_install = $true }
-    } elseif (-not $QtReady -and $NoAutoInstallDeps) {
-        Write-Warning "Qt dependencies missing and -NoAutoInstallDeps was specified."
-    }
-
-    if (-not $QtReady) {
-        Write-Warning (
-            "Qt UI requires PySide6 + QtWebEngine. Falling back to legacy Tk UI.`n" +
-            "Manual install command:`n" +
-            "  $PythonExe -m pip install -r $RequirementsPath"
-        )
-        $UiPy = $TkUiPy
-        $LegacyTk = $true
-    }
-
-    if (-not $LegacyTk) {
-        $MathJaxMain = Join-Path $ProjectRoot "assets\mathjax\es5\tex-mml-chtml.js"
-        if (-not (Test-Path -LiteralPath $MathJaxMain)) {
-            if (-not $NoMathJaxBootstrap) {
-                $null = Invoke-MathJaxBootstrap -ProjectRoot $ProjectRoot
-            } else {
-                Write-Warning "-NoMathJaxBootstrap specified; skipping local MathJax bootstrap."
-            }
+if (-not $LaunchTk) {
+    if (-not (Test-Path -LiteralPath $QtUi)) {
+        Write-Warning "qt_ui.py not found. Falling back to Tk UI."
+        $LaunchTk = $true
+    } else {
+        $QtReady = Test-QtDeps -PythonExe $PythonExe
+        if (-not $QtReady -and -not $NoAutoInstallDeps) {
+            Write-Host "Installing UI dependencies..."
+            $null = Install-UiDeps -PythonExe $PythonExe
+            $QtReady = Test-QtDeps -PythonExe $PythonExe
+        }
+        if (-not $QtReady) {
+            Write-Warning "Qt deps missing. Use -LegacyTk or install requirements."
+            $LaunchTk = $true
+        } else {
+            Invoke-MathJaxBootstrap
         }
     }
 }
 
-$UiArgs = @($UiPy)
-$SelectedModelDir = ""
-if ($ModelDir -and $ModelDir.Trim().Length -gt 0) {
-    $ModelCandidate = if ([System.IO.Path]::IsPathRooted($ModelDir)) { $ModelDir } else { Join-Path $ProjectRoot $ModelDir }
-    if (-not (Test-Path -LiteralPath $ModelCandidate)) {
-        throw "Model path not found: $ModelCandidate"
-    }
-    $ResolvedModelDir = (Resolve-Path -LiteralPath $ModelCandidate).Path
-    $UiArgs += @("--model-dir", $ResolvedModelDir)
-    $SelectedModelDir = $ResolvedModelDir
-}
-
-$Mode = if ($LegacyTk) { "legacy-tk" } else { "qt-web" }
-$DepsReady = if ($LegacyTk) { $false } else { $true }
-$MathJaxReady = $false
-if (-not $LegacyTk) {
-    $MathJaxMain = Join-Path $ProjectRoot "assets\mathjax\es5\tex-mml-chtml.js"
-    $MathJaxReady = Test-Path -LiteralPath $MathJaxMain
-}
-
-Add-UiEvent -Event "launch_start" -Mode $Mode -ModelDir $SelectedModelDir -Details @{
-    no_auto_install_deps = [bool]$NoAutoInstallDeps
-    no_mathjax_bootstrap = [bool]$NoMathJaxBootstrap
-}
-Add-UiEvent -Event "ui_mode_selected" -Mode $Mode -ModelDir $SelectedModelDir -Details @{
-    deps_ready = $DepsReady
-    mathjax_ready = $MathJaxReady
-}
-Write-BootstrapState -State @{
-    ui_mode = $Mode
-    deps_ready = $DepsReady
-    mathjax_ready = $MathJaxReady
-    no_auto_install_deps = [bool]$NoAutoInstallDeps
-    no_mathjax_bootstrap = [bool]$NoMathJaxBootstrap
-}
-
-$DepsReadyStr = $DepsReady.ToString().ToLowerInvariant()
-$MathJaxReadyStr = $MathJaxReady.ToString().ToLowerInvariant()
-Write-Host "ui_mode=$Mode deps_ready=$DepsReadyStr mathjax_ready=$MathJaxReadyStr"
-Write-Host "Launching UI mode=$Mode with: $PythonExe"
 Set-Location -LiteralPath $ProjectRoot
 
-if (-not $LegacyTk) {
-    if (-not $env:QTWEBENGINE_DISABLE_SANDBOX) {
-        $env:QTWEBENGINE_DISABLE_SANDBOX = "1"
-    }
-    if (-not $env:QT_LOGGING_RULES) {
-        $env:QT_LOGGING_RULES = "qt.webenginecontext.warning=false;qt.webenginecontext.info=false;qt.webenginecontext.debug=false;qt.qpa.gl=false"
-    }
-    $RequiredQtFlags = @(
-        "--no-sandbox",
-        "--disable-gpu-sandbox",
-        "--disable-gpu",
-        "--disable-gpu-compositing",
-        "--use-angle=swiftshader",
-        "--disable-logging",
-        "--log-level=3"
-    )
-    $ExistingFlags = @()
-    if ($env:QTWEBENGINE_CHROMIUM_FLAGS) {
-        $ExistingFlags = $env:QTWEBENGINE_CHROMIUM_FLAGS -split "\s+" | Where-Object { $_ -and $_.Trim().Length -gt 0 }
-    }
-    foreach ($flag in $RequiredQtFlags) {
-        if ($ExistingFlags -notcontains $flag) {
-            $ExistingFlags += $flag
-        }
-    }
-    $env:QTWEBENGINE_CHROMIUM_FLAGS = ($ExistingFlags -join " ")
-    if (-not $env:QT_OPENGL) {
-        $env:QT_OPENGL = "software"
-    }
-    if (-not $env:QT_QUICK_BACKEND) {
-        $env:QT_QUICK_BACKEND = "software"
+if (-not $LaunchTk) {
+    if (-not $env:QTWEBENGINE_DISABLE_SANDBOX) { $env:QTWEBENGINE_DISABLE_SANDBOX = "1" }
+    if (-not $env:QT_OPENGL) { $env:QT_OPENGL = "software" }
+    if (-not $env:QT_QUICK_BACKEND) { $env:QT_QUICK_BACKEND = "software" }
+
+    $QtArgs = @($QtUi)
+    if ($ResolvedModelDir) { $QtArgs += @("--model-dir", $ResolvedModelDir) }
+    Write-Host "Launching mode=qt-web with: $PythonExe"
+    & $PythonExe @QtArgs
+    $ExitCode = $LASTEXITCODE
+
+    if ($ExitCode -ne 0) {
+        Write-Warning "Qt UI failed (exit=$ExitCode). Falling back to Tk UI."
+        $LaunchTk = $true
     }
 }
 
-& $PythonExe @UiArgs
-$LaunchExitCode = $LASTEXITCODE
-
-if ($LaunchExitCode -ne 0 -and -not $LegacyTk) {
-    Write-Warning "Qt UI exited with code $LaunchExitCode. Falling back to legacy Tk UI."
-    Add-UiEvent -Event "ui_mode_selected" -Mode "legacy-tk" -ModelDir $SelectedModelDir -Details @{
-        reason = "qt_exit_nonzero"
-        qt_exit_code = $LaunchExitCode
+if ($LaunchTk) {
+    if (-not (Test-Path -LiteralPath $TkUi)) {
+        throw "Tk UI entrypoint not found: $TkUi"
     }
-    $TkArgs = @($TkUiPy)
-    if ($SelectedModelDir -and $SelectedModelDir.Trim().Length -gt 0) {
-        $TkArgs += @("--model-dir", $SelectedModelDir)
-    }
-    Write-Host "Launching fallback UI mode=legacy-tk with: $PythonExe"
+    $TkArgs = @($TkUi)
+    if ($ResolvedModelDir) { $TkArgs += @("--model-dir", $ResolvedModelDir) }
+    Write-Host "Launching mode=legacy-tk with: $PythonExe"
     & $PythonExe @TkArgs
-    $LaunchExitCode = $LASTEXITCODE
+    $ExitCode = $LASTEXITCODE
 }
 
 if ($MyInvocation.InvocationName -eq ".") {
-    $global:LASTEXITCODE = $LaunchExitCode
+    $global:LASTEXITCODE = $ExitCode
     return
 }
-exit $LaunchExitCode
+exit $ExitCode
+

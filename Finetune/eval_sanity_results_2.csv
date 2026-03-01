@@ -1,3 +1,0 @@
-id,bucket,expected_type,prompt,expected,base_output,base_ok,tuned_output,tuned_ok,same_output,both_ok,winner
-s_math_001,sanity_math_easy,integer,Compute 2+2,4,1,0,The sum of two numbers.,0,0,0,tie
-s_math_002,sanity_math_easy,integer,Compute 9-3,6,8,0,The result of subtracting 3 from 9.,0,0,0,tie

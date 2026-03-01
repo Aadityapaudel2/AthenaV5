@@ -1,2 +1,0 @@
-{"id":"s_math_001","bucket":"sanity_math_easy","prompt":"Compute 2+2","expected":"4","expected_type":"integer"}
-{"id":"s_math_002","bucket":"sanity_math_easy","prompt":"Compute 9-3","expected":"6","expected_type":"integer"}
