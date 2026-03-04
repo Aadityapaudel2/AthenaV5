@@ -5,7 +5,7 @@ import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import torch
 from accelerate import Accelerator
@@ -52,17 +52,14 @@ class GuiSettings:
         else:
             data = {}
         return GuiSettings(
-            # Qwen3 docs suggest:
-            # - thinking:    temp=0.6, top_p=0.95
-            # - non-thinking: temp=0.7, top_p=0.8
-            # We default to non-thinking-friendly parameters here.
-            temperature=float(data.get("temperature", 0.7)),
-            max_new_tokens=int(data.get("max_new_tokens", 16000)),
+            # Conservative desktop defaults (stable decoding).
+            temperature=float(data.get("temperature", 0.3)),
+            max_new_tokens=int(data.get("max_new_tokens", 2048)),
             top_p=float(data.get("top_p", 0.8)),
-            top_k=int(data.get("top_k", 20)),
-            repetition_penalty=float(data.get("repetition_penalty", 1.05)),
+            top_k=int(data.get("top_k", 40)),
+            repetition_penalty=float(data.get("repetition_penalty", 1.1)),
             enable_thinking=bool(data.get("enable_thinking", False)),
-            hide_thoughts=bool(data.get("hide_thoughts", True)),
+            hide_thoughts=bool(data.get("hide_thoughts", False)),
             renderer_mode=str(data.get("renderer_mode", "qt_web")),
             render_throttle_ms=int(data.get("render_throttle_ms", 75)),
         )
@@ -110,6 +107,11 @@ class LocalStreamer:
 
         self.model_dir = resolved_model_dir
         self.model_label = self.model_dir.name
+        self._cfg = AutoConfig.from_pretrained(str(self.model_dir), trust_remote_code=False)
+        self.supports_vision = bool(getattr(self._cfg, "vision_config", None))
+        self.processor: Any | None = None
+        self.image_support_error = ""
+
         self.model_proof = self._build_model_proof()
 
         self.tokenizer = AutoTokenizer.from_pretrained(str(self.model_dir), trust_remote_code=False)
@@ -117,11 +119,33 @@ class LocalStreamer:
         if self.tokenizer.pad_token_id is None and self.tokenizer.eos_token_id is not None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            str(self.model_dir),
-            dtype=torch.float16,
-            low_cpu_mem_usage=True,
-        ).to(self.device)
+        model_loader = AutoModelForCausalLM
+        if self.supports_vision:
+            try:
+                from transformers import AutoProcessor  # Lazy import to avoid hard failure in text-only envs.
+                from transformers import AutoModelForImageTextToText
+
+                self.processor = AutoProcessor.from_pretrained(str(self.model_dir), trust_remote_code=False)
+                model_loader = AutoModelForImageTextToText
+            except Exception as exc:
+                self.processor = None
+                self.image_support_error = f"Vision init failed; using text-only runtime: {exc}"
+
+        try:
+            self.model = model_loader.from_pretrained(
+                str(self.model_dir),
+                dtype=torch.float16,
+                low_cpu_mem_usage=True,
+            ).to(self.device)
+        except Exception as exc:
+            # Final fallback so UI remains usable.
+            self.processor = None
+            self.image_support_error = f"Vision model load failed; using text-only runtime: {exc}"
+            self.model = AutoModelForCausalLM.from_pretrained(
+                str(self.model_dir),
+                dtype=torch.float16,
+                low_cpu_mem_usage=True,
+            ).to(self.device)
         self.model.eval()
 
         self.active_streamer: Optional[TextIteratorStreamer] = None
@@ -219,16 +243,24 @@ class LocalStreamer:
             "render_throttle_ms": int(self.settings.render_throttle_ms),
             "eos_token_id": self._eos_token_ids(),
             "pad_token_id": self.tokenizer.pad_token_id,
+            "supports_vision": bool(self.supports_vision),
+            "image_processor_loaded": bool(self.processor is not None),
+            "image_support_error": str(self.image_support_error or ""),
         }
 
-    def stream(self, prompt: str, callback: Callable[[str], None]) -> None:
-        """Stream model output for a *fully-rendered* prompt string."""
-        if not prompt.strip():
-            callback("Type a prompt before streaming.\n")
-            return
+    def _merge_inputs(self, prompt: str) -> dict[str, Any]:
+        text_inputs = self.tokenizer(prompt, return_tensors="pt")
+        batch: dict[str, Any] = {k: v for k, v in text_inputs.items()}
 
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        device_batch: dict[str, Any] = {}
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                device_batch[key] = value.to(self.device)
+            else:
+                device_batch[key] = value
+        return device_batch
 
+    def _stream_inputs(self, inputs: dict[str, Any], callback: Callable[[str], None]) -> None:
         cfg = GenerationConfig(
             temperature=self.settings.temperature,
             max_new_tokens=self.settings.max_new_tokens,
@@ -243,7 +275,7 @@ class LocalStreamer:
         streamer = TextIteratorStreamer(
             self.tokenizer,
             skip_special_tokens=True,
-            skip_prompt=True,  # CRITICAL: don't echo the prompt back into the UI
+            skip_prompt=True,
             timeout=5.0,
         )
         self.active_streamer = streamer
@@ -269,6 +301,114 @@ class LocalStreamer:
 
         self.active_streamer = None
         self.stop_event.clear()
+
+    def stream(self, prompt: str, callback: Callable[[str], None], images: Optional[list[Any]] = None) -> None:
+        """Stream model output for a *fully-rendered* prompt string."""
+        if not prompt.strip():
+            callback("Type a prompt before streaming.\n")
+            return
+
+        _ = images
+
+        inputs = self._merge_inputs(prompt)
+        self._stream_inputs(inputs, callback)
+
+    def stream_messages(
+        self,
+        messages: list[dict[str, Any]],
+        callback: Callable[[str], None],
+        *,
+        enable_thinking: bool = False,
+    ) -> None:
+        if not messages:
+            callback("Type a prompt before streaming.\n")
+            return
+
+        if not self.supports_vision or self.processor is None:
+            prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=enable_thinking,
+            )
+            self.stream(prompt, callback)
+            return
+
+        # Qwen3.5 multimodal processor expects message["content"] as a list of
+        # typed blocks for *all* roles (including system text-only messages).
+        mm_messages: list[dict[str, Any]] = []
+        for msg in messages:
+            role = str(msg.get("role") or "user")
+            content = msg.get("content")
+            if isinstance(content, list):
+                normalized_blocks: list[dict[str, Any]] = []
+                for part in content:
+                    if isinstance(part, dict):
+                        ptype = part.get("type")
+                        if ptype == "text":
+                            normalized_blocks.append({"type": "text", "text": str(part.get("text") or "")})
+                        elif ptype in {"image", "video"}:
+                            block = {"type": str(ptype)}
+                            if "image" in part:
+                                block["image"] = part.get("image")
+                            if "image_url" in part:
+                                block["image_url"] = part.get("image_url")
+                            if "video" in part:
+                                block["video"] = part.get("video")
+                            normalized_blocks.append(block)
+                mm_messages.append({"role": role, "content": normalized_blocks})
+            else:
+                mm_messages.append({"role": role, "content": [{"type": "text", "text": str(content or "")}]})
+
+        try:
+            inputs = self.processor.apply_chat_template(
+                mm_messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+        except TypeError:
+            # Compatibility path for processor signature drift.
+            inputs = self.processor.apply_chat_template(
+                mm_messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+        except Exception:
+            # Last-resort text fallback (drops image payloads but keeps user text).
+            text_messages: list[dict[str, str]] = []
+            for msg in messages:
+                role = str(msg.get("role") or "user")
+                content = msg.get("content")
+                if isinstance(content, str):
+                    text_messages.append({"role": role, "content": content})
+                    continue
+                if isinstance(content, list):
+                    text_parts: list[str] = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text_parts.append(str(part.get("text") or ""))
+                    text_messages.append({"role": role, "content": "\n".join(x for x in text_parts if x)})
+            prompt = self.tokenizer.apply_chat_template(
+                text_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=enable_thinking,
+            )
+            self.stream(prompt, callback)
+            return
+
+        device_inputs: dict[str, Any] = {}
+        for key, value in inputs.items():
+            if isinstance(value, torch.Tensor):
+                device_inputs[key] = value.to(self.device)
+            else:
+                device_inputs[key] = value
+
+        self._stream_inputs(device_inputs, callback)
 
     def stop(self) -> None:
         self.stop_event.set()

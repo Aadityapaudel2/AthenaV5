@@ -11,6 +11,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT
@@ -69,7 +70,7 @@ ensure_project_venv()
 
 try:
     from PySide6.QtCore import QObject, QTimer, Qt, Signal  # pyright: ignore[reportMissingImports]
-    from PySide6.QtGui import QFont, QKeyEvent  # pyright: ignore[reportMissingImports]
+    from PySide6.QtGui import QFont, QImage, QKeyEvent, QPixmap  # pyright: ignore[reportMissingImports]
     from PySide6.QtWebEngineWidgets import QWebEngineView  # pyright: ignore[reportMissingImports]
     from PySide6.QtWidgets import (  # pyright: ignore[reportMissingImports]
         QApplication,
@@ -109,6 +110,7 @@ UI_EVENTS_LOG = LOG_DIR / "ui_events.jsonl"
 ASSETS_HTML = (ROOT / "assets" / "chat_shell.html").resolve()
 LOGGING_ENABLED = True
 CHAR_STREAM_INTERVAL_MS = 14
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 ASCII_AVATAR_TEXT = "[^_^]"
 ASCII_AVATAR_BY_STATE = {
     "idle": "[^_^]",
@@ -170,10 +172,12 @@ def format_model_proof_text(model_proof: dict) -> str:
     num_heads = model_proof.get("num_attention_heads")
     vocab_size = model_proof.get("vocab_size")
     max_pos = model_proof.get("max_position_embeddings")
-    target_hit = ("qwen3-4b" in model_dir.lower()) or ("qwen3-4b" in name_or_path.lower())
+    target_model = get_default_chat_model_dir().name
+    target_key = target_model.lower()
+    target_hit = (target_key in model_dir.lower()) or (target_key in name_or_path.lower())
     return (
         "Model proof:\n"
-        f"target=qwen3-4b match={'YES' if target_hit else 'NO'}\n"
+        f"target={target_model} match={'YES' if target_hit else 'NO'}\n"
         f"path={model_dir}\n"
         f"name_or_path={name_or_path}\n"
         f"model_type={model_type}\n"
@@ -193,12 +197,14 @@ def format_runtime_config_text(runtime_cfg: dict) -> str:
         f"top_p={runtime_cfg.get('top_p')} top_k={runtime_cfg.get('top_k')} repetition_penalty={runtime_cfg.get('repetition_penalty')}\n"
         f"do_sample={runtime_cfg.get('do_sample')} eos_token_id={runtime_cfg.get('eos_token_id')} pad_token_id={runtime_cfg.get('pad_token_id')}\n"
         f"enable_thinking={runtime_cfg.get('enable_thinking')} hide_thoughts={runtime_cfg.get('hide_thoughts')}\n"
-        f"renderer_mode={runtime_cfg.get('renderer_mode')} render_throttle_ms={runtime_cfg.get('render_throttle_ms')}"
+        f"renderer_mode={runtime_cfg.get('renderer_mode')} render_throttle_ms={runtime_cfg.get('render_throttle_ms')}\n"
+        f"supports_vision={runtime_cfg.get('supports_vision')} image_processor_loaded={runtime_cfg.get('image_processor_loaded')}"
     )
 
 
 class InputTextEdit(QTextEdit):
     sendRequested = Signal()
+    imagesPasted = Signal(object)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
@@ -209,6 +215,34 @@ class InputTextEdit(QTextEdit):
                 self.sendRequested.emit()
             return
         super().keyPressEvent(event)
+
+    def insertFromMimeData(self, source) -> None:  # type: ignore[override]
+        pasted: list[object] = []
+        try:
+            if source.hasImage():
+                image_data = source.imageData()
+                if isinstance(image_data, QImage) and not image_data.isNull():
+                    pasted.append(image_data)
+        except Exception:
+            pass
+
+        try:
+            if source.hasUrls():
+                for url in source.urls():
+                    if not url.isLocalFile():
+                        continue
+                    local_path = url.toLocalFile()
+                    if not local_path:
+                        continue
+                    if Path(local_path).suffix.lower() in IMAGE_SUFFIXES:
+                        pasted.append(local_path)
+        except Exception:
+            pass
+
+        if pasted:
+            self.imagesPasted.emit(pasted)
+            return
+        super().insertFromMimeData(source)
 
 
 class StreamSignals(QObject):
@@ -250,6 +284,12 @@ class AthenaQtUI(QMainWindow):
         self._stream_char_queue: deque[str] = deque()
         self._pending_finish_payload: Optional[tuple[str, str]] = None
         self._avatar_state: str = "idle"
+        self._stream_had_error = False
+        self._last_stream_error_message = ""
+        self._pending_image_paths: list[Path] = []
+        self._session_temp_image_paths: list[Path] = []
+        self._image_stage_dir = (ROOT / "data" / "clipboard_images").resolve()
+        self._image_stage_dir.mkdir(parents=True, exist_ok=True)
 
         self.signals = StreamSignals()
         self.signals.chunk.connect(self._on_stream_chunk)
@@ -266,6 +306,7 @@ class AthenaQtUI(QMainWindow):
         self.char_timer.timeout.connect(self._drain_stream_chars)
 
         self._build_ui()
+        self._refresh_image_label()
         self._render_now()
 
         append_ui_event(
@@ -321,12 +362,46 @@ class AthenaQtUI(QMainWindow):
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(8)
 
-        self.entry = InputTextEdit(bottom)
+        left = QWidget(bottom)
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+
+        self.entry = InputTextEdit(left)
         self.entry.setMinimumHeight(92)
         self.entry.setPlaceholderText("Message Athena...  (Enter = send, Shift+Enter = newline)")
         self.entry.setFont(QFont("Segoe UI Emoji", 11))
         self.entry.sendRequested.connect(self.send)
-        bottom_layout.addWidget(self.entry, stretch=1)
+        self.entry.imagesPasted.connect(self._on_images_pasted)
+        left_layout.addWidget(self.entry, stretch=1)
+
+        image_row = QWidget(left)
+        image_row_layout = QHBoxLayout(image_row)
+        image_row_layout.setContentsMargins(0, 0, 0, 0)
+        image_row_layout.setSpacing(8)
+
+        self.image_label = QLabel("Images: none", image_row)
+        self.image_label.setStyleSheet("color: #9eb2d7;")
+        image_row_layout.addWidget(self.image_label, stretch=1)
+
+        self.image_clear_btn = QPushButton("Clear Images")
+        self.image_clear_btn.clicked.connect(self._clear_pending_images)
+        self.image_clear_btn.setEnabled(False)
+        image_row_layout.addWidget(self.image_clear_btn, stretch=0)
+
+        left_layout.addWidget(image_row, stretch=0)
+
+        self.image_preview = QLabel(left)
+        self.image_preview.setFixedHeight(120)
+        self.image_preview.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.image_preview.setStyleSheet(
+            "border: 1px solid #2d4b7a; border-radius: 8px; background: #0f1728; color: #9eb2d7; padding: 4px;"
+        )
+        self.image_preview.setText("No image preview")
+        self.image_preview.setVisible(False)
+        left_layout.addWidget(self.image_preview, stretch=0)
+
+        bottom_layout.addWidget(left, stretch=1)
 
         controls = QWidget(bottom)
         ctl_layout = QVBoxLayout(controls)
@@ -426,6 +501,82 @@ class AthenaQtUI(QMainWindow):
         self._avatar_state = state
         self.avatar_frame.setText(face)
 
+    def _refresh_image_label(self) -> None:
+        count = len(self._pending_image_paths)
+        if count <= 0:
+            self.image_label.setText("Images: none")
+            self.image_clear_btn.setEnabled(False)
+            self.image_preview.setVisible(False)
+            self.image_preview.clear()
+            return
+        name_list = [p.name for p in self._pending_image_paths[:2]]
+        if count > 2:
+            name_list.append(f"+{count - 2} more")
+        self.image_label.setText(f"Images attached: {count}  ({', '.join(name_list)})")
+        self.image_clear_btn.setEnabled(True)
+        first = self._pending_image_paths[0]
+        pix = QPixmap(str(first))
+        if pix.isNull():
+            self.image_preview.setText(f"Preview unavailable: {first.name}")
+            self.image_preview.setPixmap(QPixmap())
+        else:
+            scaled = pix.scaled(220, 112, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self.image_preview.setPixmap(scaled)
+        self.image_preview.setVisible(True)
+
+    def _persist_pasted_image(self, item: object) -> Optional[Path]:
+        try:
+            if isinstance(item, str):
+                src = Path(item).expanduser().resolve()
+                if src.is_file():
+                    return src
+                return None
+            if isinstance(item, QImage):
+                if item.isNull():
+                    return None
+                out = self._image_stage_dir / f"clip_{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}.png"
+                if item.save(str(out), "PNG"):
+                    return out
+                return None
+        except Exception:
+            return None
+        return None
+
+    def _on_images_pasted(self, items: object) -> None:
+        if not isinstance(items, list):
+            return
+        added = 0
+        for item in items:
+            persisted = self._persist_pasted_image(item)
+            if persisted is None:
+                continue
+            self._pending_image_paths.append(persisted)
+            added += 1
+        if added > 0:
+            self._refresh_image_label()
+            if self.streamer.supports_vision and self.streamer.processor is None:
+                self.set_status(
+                    f"Attached {added} image(s), but vision backend is unavailable. "
+                    "Check torchvision and restart."
+                )
+            else:
+                self.set_status(f"Attached {added} image(s).")
+
+    def _cleanup_temp_images(self, paths: list[Path]) -> None:
+        for path in paths:
+            try:
+                if path.parent.resolve() == self._image_stage_dir and path.exists():
+                    path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _clear_pending_images(self, *, remove_files: bool = True) -> None:
+        paths = list(self._pending_image_paths)
+        self._pending_image_paths.clear()
+        if remove_files:
+            self._cleanup_temp_images(paths)
+        self._refresh_image_label()
+
     def _toggle_thinking(self, _state: int) -> None:
         self.settings.enable_thinking = bool(self.chk_thinking.isChecked())
         try:
@@ -511,8 +662,9 @@ class AthenaQtUI(QMainWindow):
         self._pending_finish_payload = None
         self._finalize_stream(cleaned_user_text, assistant_text)
 
-    def build_prompt(self, user_text: str) -> tuple[str, str]:
+    def build_prompt(self, user_text: str, image_paths: Optional[list[Path]] = None) -> tuple[str, str]:
         cleaned_user_text = (user_text or "").strip()
+        vision_inputs = image_paths if (image_paths and self.streamer.supports_vision and self.streamer.processor is not None) else None
         prompt = wrap.build_prompt(
             self.streamer.tokenizer,
             self.history,
@@ -520,6 +672,7 @@ class AthenaQtUI(QMainWindow):
             system_prompt=self.system_prompt,
             max_turns=6,
             enable_thinking=self.chk_thinking.isChecked(),
+            user_images=vision_inputs,
         )
         return prompt, cleaned_user_text
 
@@ -527,15 +680,40 @@ class AthenaQtUI(QMainWindow):
         if self.is_streaming:
             return
         user_text = self.entry.toPlainText().strip()
-        if not user_text:
+        image_paths = list(self._pending_image_paths)
+        if not user_text and not image_paths:
             return
         self.entry.clear()
+        # Keep staged files alive for inference; worker cleans them up after streaming.
+        self._clear_pending_images(remove_files=False)
 
-        append_log(RAW_LOG, "USER", user_text)
-        self.transcript.append({"role": "user", "content": user_text})
+        display_user = user_text if user_text else "[image input]"
+        if image_paths:
+            image_md_lines: list[str] = []
+            for idx, path in enumerate(image_paths, start=1):
+                try:
+                    image_uri = path.resolve().as_uri()
+                    image_md_lines.append(f"![attached image {idx}]({image_uri})")
+                except Exception:
+                    image_md_lines.append(f"[image {idx}: {path.name}]")
+                try:
+                    if path.parent.resolve() == self._image_stage_dir:
+                        self._session_temp_image_paths.append(path)
+                except Exception:
+                    pass
+            display_user = f"{display_user}\n\n" + "\n\n".join(image_md_lines)
+
+        log_user = user_text if user_text else "[image input]"
+        if image_paths:
+            log_user = f"{log_user}\n[attached images: {len(image_paths)}]"
+
+        append_log(RAW_LOG, "USER", log_user)
+        self.transcript.append({"role": "user", "content": display_user})
         self.transcript.append({"role": "assistant", "content": ""})
         self._current_assistant_idx = len(self.transcript) - 1
         self._stop_requested = False
+        self._stream_had_error = False
+        self._last_stream_error_message = ""
         self._last_assistant_body_html = ""
         self._stream_char_queue.clear()
         self._pending_finish_payload = None
@@ -549,25 +727,34 @@ class AthenaQtUI(QMainWindow):
             self._set_avatar_state("thinking")
         else:
             self._set_avatar_state("speaking")
-        self.set_status("Thinking... (hidden)" if self.settings.hide_thoughts and self.chk_thinking.isChecked() else "Streaming...")
+        if self.settings.hide_thoughts and self.chk_thinking.isChecked():
+            self.set_status("Thinking... (hidden)")
+        elif image_paths and (not self.streamer.supports_vision or self.streamer.processor is None):
+            self.set_status("Streaming... (image ignored: vision backend unavailable)")
+        else:
+            self.set_status("Streaming...")
         append_ui_event(
             "stream_start",
             mode="qt-web",
             model_dir=str(self.streamer.model_dir),
             details={
                 "input_chars": len(user_text),
+                "images_attached": len(image_paths),
                 "thinking_enabled": bool(self.chk_thinking.isChecked()),
                 "show_thoughts": bool(self.chk_show_thoughts.isChecked()),
             },
         )
 
-        threading.Thread(target=self._stream_worker, args=(user_text,), daemon=True).start()
+        threading.Thread(target=self._stream_worker, args=(user_text, image_paths), daemon=True).start()
 
-    def _stream_worker(self, user_text: str) -> None:
+    def _stream_worker(self, user_text: str, image_paths: list[Path]) -> None:
         assistant_chunks: list[str] = []
         think_stripper = wrap.ThinkStripper(enabled=not self.chk_show_thoughts.isChecked())
         try:
-            prompt, cleaned_user_text = self.build_prompt(user_text)
+            use_multimodal_path = bool(image_paths and self.streamer.supports_vision and self.streamer.processor is not None)
+            prompt, cleaned_user_text = self.build_prompt(user_text, image_paths)
+            if not cleaned_user_text and image_paths:
+                cleaned_user_text = "[image input]"
 
             def on_chunk(chunk: str) -> None:
                 visible = think_stripper.feed(chunk)
@@ -576,7 +763,21 @@ class AthenaQtUI(QMainWindow):
                 assistant_chunks.append(visible)
                 self.signals.chunk.emit(visible)
 
-            self.streamer.stream(prompt, on_chunk)
+            if use_multimodal_path:
+                messages = wrap.build_messages_from_history(
+                    self.history,
+                    user_text,
+                    system_prompt=self.system_prompt,
+                    max_turns=6,
+                    user_images=image_paths,
+                )
+                self.streamer.stream_messages(
+                    messages,
+                    on_chunk,
+                    enable_thinking=self.chk_thinking.isChecked(),
+                )
+            else:
+                self.streamer.stream(prompt, on_chunk)
             tail = think_stripper.flush()
             if tail:
                 assistant_chunks.append(tail)
@@ -584,7 +785,8 @@ class AthenaQtUI(QMainWindow):
             assistant_text = wrap.clean_assistant_text("".join(assistant_chunks))
             self.signals.finished.emit(cleaned_user_text, assistant_text)
         except Exception as exc:
-            self.signals.error.emit(str(exc))
+            msg = str(exc).strip() or f"{exc.__class__.__name__}: {repr(exc)}"
+            self.signals.error.emit(msg)
             cleaned_fallback = user_text.strip()
             assistant_text = wrap.clean_assistant_text("".join(assistant_chunks))
             self.signals.finished.emit(cleaned_fallback, assistant_text)
@@ -609,6 +811,8 @@ class AthenaQtUI(QMainWindow):
         if not self.is_streaming and self._current_assistant_idx is None:
             return
         self._set_avatar_state("error")
+        self._stream_had_error = True
+        self._last_stream_error_message = message or "stream failed"
         append_ui_event(
             "stream_error",
             mode="qt-web",
@@ -631,7 +835,12 @@ class AthenaQtUI(QMainWindow):
 
     def _finalize_stream(self, cleaned_user_text: str, assistant_text: str, *, final_state: str = "Ready") -> None:
         if self._current_assistant_idx is not None and self._current_assistant_idx < len(self.transcript):
-            self.transcript[self._current_assistant_idx]["content"] = assistant_text
+            existing = self.transcript[self._current_assistant_idx].get("content", "")
+            if assistant_text or (not self._stream_had_error):
+                self.transcript[self._current_assistant_idx]["content"] = assistant_text
+            elif not existing.strip():
+                msg = self._last_stream_error_message or "stream failed"
+                self.transcript[self._current_assistant_idx]["content"] = f"[stream error] {msg}"
         if assistant_text:
             self.history.append((cleaned_user_text, assistant_text))
             if len(self.history) > 12:
@@ -651,6 +860,8 @@ class AthenaQtUI(QMainWindow):
         self._render_latest_assistant_body(force_typeset=True)
         self._current_assistant_idx = None
         self._stop_requested = False
+        self._stream_had_error = False
+        self._last_stream_error_message = ""
         self.is_streaming = False
         self.btn_send.setEnabled(True)
         self.chk_thinking.setEnabled(True)
@@ -705,6 +916,10 @@ class AthenaQtUI(QMainWindow):
         if self.is_streaming:
             self.streamer.stop()
         self.char_timer.stop()
+        if self._session_temp_image_paths:
+            self._cleanup_temp_images(self._session_temp_image_paths)
+            self._session_temp_image_paths.clear()
+        self._clear_pending_images()
         self.history.clear()
         self.transcript = [
             {"role": "system", "content": f"Loaded model: {self.streamer.model_dir}"},

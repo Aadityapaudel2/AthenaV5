@@ -8,14 +8,19 @@ __pycache__/
 .DS_Store
 thumbs.db
 logs/
+data/users/
+data/clipboard_images/
 models/
 Finetune/output/
 Finetune/trainingdata/output/
 Finetune/math_finetune_workspace/
 temp
 temp_compile/
+temp_portal*.log
 *.zip
 *.tmp
+portal_auth.env
+.env.portal
 
 # Local workspace scratch
 codexcontext.txt
@@ -44,3 +49,5 @@ Finetune/trainingdata/**/dataset_persona_chat.jsonl
 # Downloaded UI assets (bootstrap script can rehydrate)
 assets/mathjax/
 system_prompt_math.txt
+googleauthcloud.txt
+portal_auth.env

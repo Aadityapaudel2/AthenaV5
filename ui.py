@@ -111,10 +111,12 @@ def format_model_proof_text(model_proof: dict) -> str:
     num_heads = model_proof.get("num_attention_heads")
     vocab_size = model_proof.get("vocab_size")
     max_pos = model_proof.get("max_position_embeddings")
-    target_hit = ("qwen3-4b" in model_dir.lower()) or ("qwen3-4b" in name_or_path.lower())
+    target_model = get_default_chat_model_dir().name
+    target_key = target_model.lower()
+    target_hit = (target_key in model_dir.lower()) or (target_key in name_or_path.lower())
     return (
         "Model proof:\n"
-        f"target=qwen3-4b match={'YES' if target_hit else 'NO'}\n"
+        f"target={target_model} match={'YES' if target_hit else 'NO'}\n"
         f"path={model_dir}\n"
         f"name_or_path={name_or_path}\n"
         f"model_type={model_type}\n"
@@ -134,7 +136,8 @@ def format_runtime_config_text(runtime_cfg: dict) -> str:
         f"top_p={runtime_cfg.get('top_p')} top_k={runtime_cfg.get('top_k')} repetition_penalty={runtime_cfg.get('repetition_penalty')}\n"
         f"do_sample={runtime_cfg.get('do_sample')} eos_token_id={runtime_cfg.get('eos_token_id')} pad_token_id={runtime_cfg.get('pad_token_id')}\n"
         f"enable_thinking={runtime_cfg.get('enable_thinking')} hide_thoughts={runtime_cfg.get('hide_thoughts')}\n"
-        f"renderer_mode={runtime_cfg.get('renderer_mode')} render_throttle_ms={runtime_cfg.get('render_throttle_ms')}"
+        f"renderer_mode={runtime_cfg.get('renderer_mode')} render_throttle_ms={runtime_cfg.get('render_throttle_ms')}\n"
+        f"supports_vision={runtime_cfg.get('supports_vision')} image_processor_loaded={runtime_cfg.get('image_processor_loaded')}"
     )
 
 

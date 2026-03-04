@@ -16,23 +16,121 @@ Designed to be imported by ui.py / cli_chat.py.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Optional file users can create/edit to customize the system prompt without
 # touching Python files.
-SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "system_prompt.txt"
+SYSTEM_PROMPT_JSON_PATH = Path(__file__).resolve().parent / "system_prompt.json"
+SYSTEM_PROMPT_TXT_PATH = Path(__file__).resolve().parent / "system_prompt.txt"
+SYSTEM_PROMPT_PATH = SYSTEM_PROMPT_TXT_PATH
 
 DEFAULT_SYSTEM_PROMPT = (
     "Answer in exactly one clear sentence."
 )
 
 
-def load_system_prompt(path: Path = SYSTEM_PROMPT_PATH) -> str:
-    """Load a system prompt from disk, falling back to DEFAULT_SYSTEM_PROMPT."""
+def _as_str_lines(value: Any) -> List[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        out: List[str] = []
+        for item in value:
+            if isinstance(item, str):
+                t = item.strip()
+                if t:
+                    out.append(t)
+        return out
+    return []
+
+
+def _render_system_prompt_from_json(cfg: dict[str, Any]) -> str:
+    direct = cfg.get("system_prompt")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+
+    chunks: List[str] = []
+
+    persona = cfg.get("persona")
+    if isinstance(persona, str) and persona.strip():
+        chunks.append(persona.strip())
+
+    section_specs = [
+        ("core_behavior", "Core behavior:"),
+        ("math_response_protocol", "Math response protocol:"),
+        ("formatting_rules", "Formatting rules:"),
+        ("default_mode", "Default mode:"),
+    ]
+    for key, label in section_specs:
+        lines = _as_str_lines(cfg.get(key))
+        if lines:
+            body = "\n".join(f"- {line}" for line in lines)
+            chunks.append(f"{label}\n{body}")
+
+    few_shots = cfg.get("few_shots")
+    if isinstance(few_shots, list):
+        examples: List[str] = []
+        idx = 1
+        for item in few_shots:
+            if not isinstance(item, dict):
+                continue
+            user = item.get("user")
+            assistant = item.get("assistant")
+            if not isinstance(user, str) or not isinstance(assistant, str):
+                continue
+            u = user.strip()
+            a = assistant.strip()
+            if not u or not a:
+                continue
+            examples.append(f"Example {idx}\nUser: {u}\nAssistant:\n{a}")
+            idx += 1
+        if examples:
+            chunks.append("Few-shot style examples:\n\n" + "\n\n".join(examples))
+
+    text = "\n\n".join(chunks).strip()
+    return text or DEFAULT_SYSTEM_PROMPT
+
+
+def load_system_prompt(path: Optional[Path] = None) -> str:
+    """Load a system prompt from disk, falling back to DEFAULT_SYSTEM_PROMPT.
+
+    Resolution order:
+    1) Explicit `path` argument if provided.
+    2) `system_prompt.json` (JSON-first config).
+    3) `system_prompt.txt` (legacy plain text).
+    """
+    if path is not None:
+        if not path.exists():
+            return DEFAULT_SYSTEM_PROMPT
+        if path.suffix.lower() == ".json":
+            try:
+                data = json.loads(path.read_text(encoding="utf-8-sig"))
+                if isinstance(data, dict):
+                    return _render_system_prompt_from_json(data)
+                return DEFAULT_SYSTEM_PROMPT
+            except Exception:
+                return DEFAULT_SYSTEM_PROMPT
+        try:
+            text = path.read_text(encoding="utf-8-sig").strip()
+            return text or DEFAULT_SYSTEM_PROMPT
+        except Exception:
+            return DEFAULT_SYSTEM_PROMPT
+
+    if SYSTEM_PROMPT_JSON_PATH.exists():
+        try:
+            data = json.loads(SYSTEM_PROMPT_JSON_PATH.read_text(encoding="utf-8-sig"))
+            if isinstance(data, dict):
+                text = _render_system_prompt_from_json(data)
+                if text:
+                    return text
+        except Exception:
+            pass
+
     try:
-        text = path.read_text(encoding="utf-8").strip()
+        text = SYSTEM_PROMPT_TXT_PATH.read_text(encoding="utf-8-sig").strip()
         return text or DEFAULT_SYSTEM_PROMPT
     except FileNotFoundError:
         return DEFAULT_SYSTEM_PROMPT
@@ -44,9 +142,10 @@ def build_messages_from_history(
     *,
     system_prompt: str,
     max_turns: int = 6,
-) -> List[Dict[str, str]]:
+    user_images: Optional[Sequence[Any]] = None,
+) -> List[Dict[str, Any]]:
     """Convert a simple (user, assistant) history into chat messages."""
-    messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
 
     # Keep only the last N turns (a turn = user+assistant)
     for u, a in list(history)[-max_turns:]:
@@ -57,7 +156,22 @@ def build_messages_from_history(
         if a:
             messages.append({"role": "assistant", "content": a})
 
-    messages.append({"role": "user", "content": user_text.strip()})
+    clean_user = user_text.strip()
+    if user_images:
+        content: List[Dict[str, Any]] = []
+        for image in user_images:
+            if isinstance(image, Path):
+                content.append({"type": "image", "image": str(image)})
+                continue
+            if isinstance(image, str):
+                image_s = image.strip()
+                content.append({"type": "image", "image": image_s})
+                continue
+            content.append({"type": "image", "image": image})
+        content.append({"type": "text", "text": clean_user or "Describe this image."})
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": clean_user})
     return messages
 
 
@@ -121,6 +235,7 @@ def build_prompt(
     system_prompt: str,
     max_turns: int = 6,
     enable_thinking: Optional[bool] = None,
+    user_images: Optional[Sequence[Any]] = None,
 ) -> str:
     """One-call helper used by the GUI."""
     messages = build_messages_from_history(
@@ -128,6 +243,7 @@ def build_prompt(
         user_text,
         system_prompt=system_prompt,
         max_turns=max_turns,
+        user_images=user_images,
     )
     return render_prompt(
         tokenizer,

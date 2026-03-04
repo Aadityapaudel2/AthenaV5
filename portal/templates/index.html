@@ -10,6 +10,24 @@
         pathPrefix: "{{ path_prefix }}",
       };
     </script>
+    <script>
+      window.MathJax = {
+        tex: {
+          inlineMath: [
+            ["$", "$"],
+            ["\\(", "\\)"],
+          ],
+          displayMath: [
+            ["$$", "$$"],
+            ["\\[", "\\]"],
+          ],
+        },
+        options: {
+          skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+        },
+      };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script defer src="{{ request.url_for('portal-static', path='portal.js') }}"></script>
   </head>
   <body>
@@ -19,23 +37,30 @@
           <h1>Athena V5 Portal</h1>
           <div id="runtime-line" class="runtime-line">Initializing...</div>
         </div>
+        <div class="user-wrap">
+          <div id="user-line" class="user-line">User: unknown</div>
+          <button id="logout-btn" class="btn ghost" type="button">Logout</button>
+        </div>
       </header>
 
-      <main class="main-grid">
+      <main class="main-stack">
         <section class="transcript-panel">
           <div id="transcript-scroll" class="transcript-scroll">
             <section id="transcript" class="transcript">{{ initial_transcript_html | safe }}</section>
           </div>
         </section>
 
-        <aside class="control-panel">
+        <section class="composer-panel">
           <label class="label" for="prompt-input">Message</label>
-          <textarea id="prompt-input" rows="8" placeholder="Type your prompt here..."></textarea>
+          <textarea id="prompt-input" rows="2" placeholder="Type your prompt here..."></textarea>
 
-          <div class="check-row">
-            <label><input id="thinking-toggle" type="checkbox" /> Thinking</label>
-            <label><input id="show-thoughts-toggle" type="checkbox" /> Show thoughts</label>
+          <div class="attach-row">
+            <input id="image-input" type="file" accept="image/*" multiple hidden />
+            <button id="attach-btn" class="btn" type="button">Attach Images</button>
+            <button id="clear-images-btn" class="btn" type="button">Clear Images</button>
+            <div id="image-line" class="image-line">Images: none</div>
           </div>
+          <div id="image-preview" class="image-preview"></div>
 
           <div class="btn-row">
             <button id="send-btn" class="btn primary" type="button">Send</button>
@@ -43,7 +68,7 @@
           </div>
 
           <div id="status-box" class="status-box">Ready.</div>
-        </aside>
+        </section>
       </main>
     </div>
   </body>

@@ -101,7 +101,11 @@ if (-not $Config.train) { throw "Missing 'train' section in args file: $Resolved
 $SelectedModelPath = if ($PSBoundParameters.ContainsKey("ModelPath")) { $ModelPath } else { [string]$Config.paths.model_path }
 $SelectedTrainFile = if ($PSBoundParameters.ContainsKey("TrainFile")) { $TrainFile } else { [string]$Config.paths.train_file }
 $SelectedOutputDir = if ($PSBoundParameters.ContainsKey("OutputDir")) { $OutputDir } else { [string]$Config.paths.output_dir }
-$SelectedResumeCheckpoint = if ($PSBoundParameters.ContainsKey("ResumeFromCheckpoint")) { $ResumeFromCheckpoint } else { [string]$Config.paths.resume_from_checkpoint }
+$ConfigResumeCheckpoint = ""
+if ($Config.paths.PSObject.Properties.Name -contains "resume_from_checkpoint") {
+    $ConfigResumeCheckpoint = [string]$Config.paths.resume_from_checkpoint
+}
+$SelectedResumeCheckpoint = if ($PSBoundParameters.ContainsKey("ResumeFromCheckpoint")) { $ResumeFromCheckpoint } else { $ConfigResumeCheckpoint }
 
 if ([string]::IsNullOrWhiteSpace($SelectedModelPath)) { throw "model_path is required." }
 if ([string]::IsNullOrWhiteSpace($SelectedTrainFile)) { throw "train_file is required." }

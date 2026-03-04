@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import html
 import re
 from typing import Iterable
@@ -25,6 +26,10 @@ def _new_markdown_renderer() -> MarkdownIt:
             "breaks": True,
         },
     )
+    # Allow local file URIs for pasted image previews in the desktop UI transcript.
+    # Keep default validation for all other schemes.
+    default_validate_link = md.validateLink
+    md.validateLink = lambda url: url.lower().startswith("file://") or default_validate_link(url)  # type: ignore[assignment]
     return md
 
 
@@ -67,7 +72,9 @@ def render_transcript_html(messages: Iterable[dict[str, str]]) -> str:
     chunks: list[str] = []
     for msg in messages:
         role = (msg.get("role") or "assistant").strip().lower()
-        body = render_message_body_html(msg.get("content") or "")
+        raw_content = msg.get("content") or ""
+        raw_b64 = base64.b64encode(raw_content.encode("utf-8")).decode("ascii")
+        body = render_message_body_html(raw_content)
         chunks.append(
             (
                 f'<article class="msg {html.escape(role)}">'
@@ -75,8 +82,9 @@ def render_transcript_html(messages: Iterable[dict[str, str]]) -> str:
                 '<div class="bubble">'
                 '<div class="bubble-head">'
                 f'<span class="role-pill"><span class="role-icon">{html.escape(_role_icon(role))}</span>{html.escape(_role_label(role))}</span>'
+                '<button class="copy-msg-btn" type="button" title="Copy raw message" aria-label="Copy raw message">Copy</button>'
                 "</div>"
-                f'<section class="msg-body">{body}</section>'
+                f'<section class="msg-body" data-raw-b64="{html.escape(raw_b64)}">{body}</section>'
                 "</div>"
                 "</article>"
             )

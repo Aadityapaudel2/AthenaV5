@@ -159,6 +159,22 @@ body {
   font-size: 13px;
 }
 
+.copy-msg-btn {
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  border: 1px solid #35598f;
+  background: #1a2b48;
+  color: #eff5ff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.copy-msg-btn:hover {
+  background: #234172;
+}
+
 .msg-body {
   padding: 10px 12px;
   overflow-wrap: anywhere;
@@ -206,12 +222,32 @@ code {
 }
 
 pre {
+  position: relative;
   margin: 0.45em 0;
-  padding: 10px;
+  padding: 28px 10px 10px;
   border-radius: 8px;
   border: 1px solid rgba(84, 121, 181, 0.45);
   background: rgba(9, 16, 28, 0.9);
   overflow-x: auto;
+}
+
+.copy-code-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: 6px;
+  border: 1px solid #35598f;
+  background: #1a2b48;
+  color: #eff5ff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.copy-code-btn:hover {
+  background: #234172;
 }
 
 code {
@@ -258,4 +294,14 @@ td {
   overflow-y: hidden;
   max-width: 100%;
   padding: 1px 0;
+}
+
+.msg-body img {
+  display: block;
+  max-width: min(560px, 100%);
+  height: auto;
+  margin: 0.45em 0;
+  border: 1px solid rgba(93, 129, 188, 0.6);
+  border-radius: 10px;
+  background: rgba(8, 14, 25, 0.7);
 }

@@ -5,7 +5,7 @@
   "top_k": 40,
   "repetition_penalty": 1.1,
   "enable_thinking": false,
-  "hide_thoughts": false,
+  "hide_thoughts": true,
   "renderer_mode": "qt_web",
   "render_throttle_ms": 75
 }

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ request.url_for('portal-static', path='portal.css') }}" />
+  </head>
+  <body>
+    <main class="login-shell">
+      <section class="login-card">
+        <h1 class="login-title">Welcome to Intelligent Learning</h1>
+        <p class="login-copy">
+          Athena V5 is your focused workspace for rigorous reasoning and disciplined growth.
+        </p>
+        <p class="login-copy">
+          You will find your Athena muse here: structured thinking, clear decisions, and consistent progress.
+        </p>
+        <a class="btn primary login-btn" href="{{ path_prefix }}/auth/login">Sign in with Google</a>
+        <p class="login-note">
+          By signing in, your workspace folder is created automatically and your raw session events are stored on this host.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

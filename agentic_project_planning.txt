@@ -27,6 +27,8 @@ Drawing:
     [Session memory (structured state)]           [NEXT]
     [Long-term memory store + retrieval]          [LATER]
 
+
+
   [Voice Stack]
     [STT (mic -> text)]                           [NEXT]~at a time.
 - Every branch should have a feature flag so failures do not break core chat.
@@ -34,12 +36,9 @@ Drawing:
 - Voice branch should be split services (LLM process separate from STT/TTS process).
 - Vision branch should start with image upload before any live camera stream.
 
-What we can do right now (real capabilities):
-- Local 1.7B text chat with streaming output.
-- Stop/cancel generation from UI.
-- Portal route with smoke mode and live model mode.
-- Conversation transcript rendering (markdown/latex style).
-- Basic multi-turn history in chat request.
+Currently brainstorming: 
+  - SWARM concept: a mixture of 1.7b models talking to each other all simultaneously helping to solve one math problem. 
+
 
 What is not implemented yet:
 - Native tool-calling execution loop (python/sympy/numpy router).

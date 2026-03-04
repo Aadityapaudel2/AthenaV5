@@ -1,282 +1,123 @@
 #!/usr/bin/env python3
-"""
-Lean SFT trainer for conversation JSONL produced by prepare_data.py.
-
-Expected input JSONL row:
-  {"messages": [{"role": "user|assistant", "content": "..."}, ...]}
-"""
-
 from __future__ import annotations
-
-import argparse
-import json
+import argparse, json
 from pathlib import Path
-from typing import Any
-
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
 
-ROLE_USER = "<|user|>"
-ROLE_ASSISTANT = "<|assistant|>"
-ROLE_SYSTEM = "<|system|>"
+ROLES = {"system", "user", "assistant"}
+NUM_ARGS = [
+    ("max_seq_length", int, 2048), ("per_device_train_batch_size", int, 1), ("gradient_accumulation_steps", int, 8),
+    ("learning_rate", float, 2e-5), ("num_train_epochs", float, 3.0), ("warmup_ratio", float, 0.03),
+    ("lr_scheduler_type", str, "linear"), ("weight_decay", float, 0.0), ("max_grad_norm", float, 1.0),
+    ("logging_steps", int, 10), ("save_steps", int, 200), ("save_total_limit", int, 2),
+    ("expected_samples", int, 0), ("seed", int, 777),
+]
+FLAG_ARGS = ("save_only_model", "strict_no_truncation", "bf16", "fp16", "gradient_checkpointing")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--model_name_or_path", required=True)
-    p.add_argument("--train_file", required=True)
-    p.add_argument("--output_dir", required=True)
-
-    p.add_argument("--max_seq_length", type=int, default=2048)
-    p.add_argument("--per_device_train_batch_size", type=int, default=1)
-    p.add_argument("--gradient_accumulation_steps", type=int, default=8)
-    p.add_argument("--learning_rate", type=float, default=2e-5)
-    p.add_argument("--num_train_epochs", type=float, default=3.0)
-    p.add_argument("--warmup_ratio", type=float, default=0.03)
-    p.add_argument("--lr_scheduler_type", type=str, default="linear")
-    p.add_argument("--weight_decay", type=float, default=0.0)
-    p.add_argument("--max_grad_norm", type=float, default=1.0)
-    p.add_argument("--logging_steps", type=int, default=10)
-    p.add_argument("--save_steps", type=int, default=200)
-    p.add_argument("--save_total_limit", type=int, default=2)
-    p.add_argument("--save_only_model", action="store_true")
-    p.add_argument("--strict_no_truncation", action="store_true")
-    p.add_argument("--expected_samples", type=int, default=0)
-
-    p.add_argument("--bf16", action="store_true")
-    p.add_argument("--fp16", action="store_true")
-    p.add_argument("--gradient_checkpointing", action="store_true")
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--resume_from_checkpoint", type=str, default="")
+    p = argparse.ArgumentParser(description="Compact Qwen chat SFT trainer")
+    for n in ("model_name_or_path", "train_file", "output_dir"): p.add_argument(f"--{n}", required=True)
+    for n, t, d in NUM_ARGS: p.add_argument(f"--{n}", type=t, default=d)
+    for n in FLAG_ARGS: p.add_argument(f"--{n}", action="store_true")
+    p.add_argument("--resume_from_checkpoint", default="")
     return p.parse_args()
 
 
 def normalize_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
+    out = []
     for m in messages:
-        role = (m.get("role") or "").strip()
-        content = (m.get("content") or "").strip()
-        if role not in {"system", "user", "assistant"}:
-            continue
-        if not content:
-            continue
-        out.append({"role": role, "content": content})
+        role, content = str(m.get("role") or "").strip(), str(m.get("content") or "").strip()
+        if role in ROLES and content: out.append({"role": role, "content": content})
     return out
 
 
-def render_chat(tokenizer: Any, messages: list[dict[str, str]], *, add_generation_prompt: bool) -> str:
-    """Render messages using the tokenizer's native chat template."""
-    if hasattr(tokenizer, "apply_chat_template"):
-        try:
-            return tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=add_generation_prompt,
-            )
-        except TypeError:
-            return tokenizer.apply_chat_template(messages, tokenize=False)
-    # Fallback if tokenizer has no chat template.
-    chunks: list[str] = []
-    for m in messages:
-        role = m["role"]
-        content = m["content"]
-        if role == "system":
-            chunks.append(f"{ROLE_SYSTEM}\n{content}\n")
-        elif role == "user":
-            chunks.append(f"{ROLE_USER}\n{content}\n")
-        elif role == "assistant":
-            chunks.append(f"{ROLE_ASSISTANT}\n{content}\n")
-    if add_generation_prompt:
-        chunks.append(f"{ROLE_ASSISTANT}\n")
-    return "".join(chunks).strip() + "\n"
+def render(tok, messages: list[dict[str, str]], gen: bool = False) -> str:
+    return tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=gen)
 
 
-class JsonlChatDataset(Dataset):
+def ids(tok, text: str) -> list[int]:
+    return tok(text, add_special_tokens=False)["input_ids"]
+
+
+class ChatDataset(Dataset):
     def __init__(self, path: str):
-        self.samples: list[list[dict[str, str]]] = []
         p = Path(path)
-        if not p.is_file():
-            raise FileNotFoundError(f"Train file not found: {p}")
-
+        if not p.is_file(): raise FileNotFoundError(f"Train file not found: {p}")
+        self.samples: list[list[dict[str, str]]] = []
         with p.open("r", encoding="utf-8-sig") as fh:
-            for line_no, line in enumerate(fh, start=1):
+            for i, line in enumerate(fh, 1):
                 line = line.strip()
-                if not line:
-                    continue
+                if not line: continue
                 obj = json.loads(line)
-                messages = obj.get("messages")
-                if not isinstance(messages, list):
-                    raise ValueError(f"Line {line_no}: missing 'messages' list")
-                normalized = normalize_messages(messages)
-                if normalized:
-                    self.samples.append(normalized)
+                msgs = obj.get("messages")
+                if not isinstance(msgs, list): raise ValueError(f"Line {i}: missing 'messages' list")
+                cleaned = normalize_messages(msgs)
+                if cleaned: self.samples.append(cleaned)
+        if not self.samples: raise ValueError("No usable training samples found")
 
-        if not self.samples:
-            raise ValueError("No usable training samples found in train_file")
-
-    def __len__(self) -> int:
-        return len(self.samples)
-
-    def __getitem__(self, idx: int) -> dict[str, list[dict[str, str]]]:
-        return {"messages": self.samples[idx]}
+    def __len__(self) -> int: return len(self.samples)
+    def __getitem__(self, i: int) -> dict: return {"messages": self.samples[i]}
 
 
-class DataCollatorForCausalChat:
-    def __init__(self, tokenizer: Any, max_length: int):
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-
-    def __call__(self, features: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
-        batch_input_ids: list[list[int]] = []
-        batch_labels: list[list[int]] = []
-
-        for feature in features:
-            messages = feature["messages"]
-            full_text = render_chat(self.tokenizer, messages, add_generation_prompt=False)
-            full_ids = self.tokenizer(full_text, add_special_tokens=False)["input_ids"]
-            labels = [-100] * len(full_ids)
-
-            # Label assistant spans using native template boundaries.
-            for idx, msg in enumerate(messages):
-                if msg["role"] != "assistant":
-                    continue
-                prefix_text = render_chat(self.tokenizer, messages[:idx], add_generation_prompt=True)
-                turn_text = render_chat(self.tokenizer, messages[: idx + 1], add_generation_prompt=False)
-                prefix_len = len(self.tokenizer(prefix_text, add_special_tokens=False)["input_ids"])
-                turn_len = len(self.tokenizer(turn_text, add_special_tokens=False)["input_ids"])
-                start = min(prefix_len, len(labels))
-                end = min(turn_len, len(labels))
-                for pos in range(start, end):
-                    labels[pos] = full_ids[pos]
-
-            if len(full_ids) > self.max_length:
-                full_ids = full_ids[: self.max_length]
-                labels = labels[: self.max_length]
-
-            batch_input_ids.append(full_ids)
-            batch_labels.append(labels)
-
-        pad_id = self.tokenizer.pad_token_id
-        if pad_id is None:
-            raise ValueError("Tokenizer has no pad_token_id; set pad token before collator use.")
-
-        max_len = max(len(x) for x in batch_input_ids)
-        input_ids_t = torch.full((len(batch_input_ids), max_len), pad_id, dtype=torch.long)
-        attention_t = torch.zeros((len(batch_input_ids), max_len), dtype=torch.long)
-        labels_t = torch.full((len(batch_input_ids), max_len), -100, dtype=torch.long)
-
-        for i, (ids, labs) in enumerate(zip(batch_input_ids, batch_labels)):
-            l = len(ids)
-            input_ids_t[i, :l] = torch.tensor(ids, dtype=torch.long)
-            attention_t[i, :l] = 1
-            labels_t[i, :l] = torch.tensor(labs, dtype=torch.long)
-
-        return {"input_ids": input_ids_t, "attention_mask": attention_t, "labels": labels_t}
+def make_collator(tok, max_len: int):
+    def collate(batch: list[dict]) -> dict[str, torch.Tensor]:
+        packed_ids, packed_lbl = [], []
+        for row in batch:
+            msgs = row["messages"]
+            x = ids(tok, render(tok, msgs))
+            y = [-100] * len(x)
+            for i, m in enumerate(msgs):
+                if m["role"] != "assistant": continue
+                s = min(len(ids(tok, render(tok, msgs[:i], True))), len(x))
+                e = min(len(ids(tok, render(tok, msgs[: i + 1]))), len(x))
+                if e > s: y[s:e] = x[s:e]
+            packed_ids.append(x[:max_len]); packed_lbl.append(y[:max_len])
+        pad = tok.pad_token_id
+        if pad is None: raise ValueError("Tokenizer pad_token_id is required")
+        mlen = max(len(v) for v in packed_ids)
+        x = torch.full((len(batch), mlen), pad, dtype=torch.long)
+        a = torch.zeros((len(batch), mlen), dtype=torch.long)
+        y = torch.full((len(batch), mlen), -100, dtype=torch.long)
+        for i, (v, l) in enumerate(zip(packed_ids, packed_lbl)):
+            n = len(v)
+            x[i, :n] = torch.tensor(v)
+            a[i, :n] = 1
+            y[i, :n] = torch.tensor(l)
+        return {"input_ids": x, "attention_mask": a, "labels": y}
+    return collate
 
 
 def main() -> None:
-    args = parse_args()
-    torch.manual_seed(args.seed)
+    args = parse_args(); torch.manual_seed(args.seed)
+    ds = ChatDataset(args.train_file); print(f"Loaded samples: {len(ds)}")
+    if args.expected_samples and len(ds) != args.expected_samples: raise ValueError(f"Expected {args.expected_samples}, got {len(ds)}")
 
-    train_ds = JsonlChatDataset(args.train_file)
-    print(f"Loaded samples: {len(train_ds)}")
-    if args.expected_samples > 0 and len(train_ds) != args.expected_samples:
-        raise ValueError(
-            f"Expected {args.expected_samples} samples, but loaded {len(train_ds)} from train_file."
-        )
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
-    added_special_tokens = False
-    if tokenizer.pad_token is None:
-        if tokenizer.eos_token is not None:
-            tokenizer.pad_token = tokenizer.eos_token
-        else:
-            tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
-            added_special_tokens = True
+    tok = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
+    if not hasattr(tok, "apply_chat_template"): raise ValueError("Tokenizer must support apply_chat_template()")
+    if tok.pad_token is None: tok.pad_token = tok.eos_token if tok.eos_token is not None else "<|pad|>"
 
     model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
-    uses_native_template = hasattr(tokenizer, "apply_chat_template")
-    if not uses_native_template:
-        tokenizer.add_special_tokens({"additional_special_tokens": [ROLE_SYSTEM, ROLE_USER, ROLE_ASSISTANT]})
-        added_special_tokens = True
-    if added_special_tokens:
-        model.resize_token_embeddings(len(tokenizer))
+    if args.gradient_checkpointing: model.gradient_checkpointing_enable()
 
-    if args.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
+    lens = sorted(len(ids(tok, render(tok, s))) for s in ds.samples)
+    over = sum(1 for n in lens if n > args.max_seq_length)
+    print(f"Token length stats: min={lens[0]} p95={lens[int(0.95*(len(lens)-1))]} max={lens[-1]} over_limit({args.max_seq_length})={over}")
+    if args.strict_no_truncation and over: raise ValueError(f"strict_no_truncation enabled but {over} samples exceed max_seq_length={args.max_seq_length}")
 
-    collator = DataCollatorForCausalChat(tokenizer=tokenizer, max_length=args.max_seq_length)
-
-    # Preflight sequence-length stats so truncation behavior is explicit.
-    lengths: list[int] = []
-    for sample in train_ds.samples:
-        text = render_chat(tokenizer, sample, add_generation_prompt=False)
-        token_count = len(tokenizer(text, add_special_tokens=False)["input_ids"])
-        lengths.append(token_count)
-
-    max_len = max(lengths)
-    over_limit = sum(1 for n in lengths if n > args.max_seq_length)
-    sorted_lens = sorted(lengths)
-    p95 = sorted_lens[int(0.95 * (len(sorted_lens) - 1))]
-    print(
-        f"Token length stats: min={sorted_lens[0]} p95={p95} max={max_len} "
-        f"over_limit({args.max_seq_length})={over_limit}"
+    targs = TrainingArguments(
+        output_dir=args.output_dir, per_device_train_batch_size=args.per_device_train_batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps, learning_rate=args.learning_rate,
+        num_train_epochs=args.num_train_epochs, warmup_ratio=args.warmup_ratio, lr_scheduler_type=args.lr_scheduler_type,
+        weight_decay=args.weight_decay, max_grad_norm=args.max_grad_norm, logging_steps=args.logging_steps,
+        save_steps=args.save_steps, save_total_limit=args.save_total_limit, save_only_model=args.save_only_model,
+        bf16=args.bf16, fp16=args.fp16, report_to=[], remove_unused_columns=False, seed=args.seed,
     )
-    if args.strict_no_truncation and over_limit > 0:
-        raise ValueError(
-            f"strict_no_truncation is enabled, but {over_limit} samples exceed "
-            f"max_seq_length={args.max_seq_length}. Increase max_seq_length to at least {max_len}."
-        )
-
-    train_args = TrainingArguments(
-        output_dir=args.output_dir,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        learning_rate=args.learning_rate,
-        num_train_epochs=args.num_train_epochs,
-        warmup_ratio=args.warmup_ratio,
-        lr_scheduler_type=args.lr_scheduler_type,
-        weight_decay=args.weight_decay,
-        max_grad_norm=args.max_grad_norm,
-        logging_steps=args.logging_steps,
-        save_steps=args.save_steps,
-        save_total_limit=args.save_total_limit,
-        save_only_model=args.save_only_model,
-        bf16=args.bf16,
-        fp16=args.fp16,
-        report_to=[],
-        remove_unused_columns=False,
-        seed=args.seed,
-    )
-
-    trainer_kwargs: dict[str, Any] = {
-        "model": model,
-        "args": train_args,
-        "train_dataset": train_ds,
-        "data_collator": collator,
-        # Newer transformers prefers processing_class over tokenizer.
-        "processing_class": tokenizer,
-    }
-    try:
-        trainer = Trainer(**trainer_kwargs)
-    except TypeError:
-        # Compatibility fallback for older transformers builds.
-        trainer_kwargs.pop("processing_class", None)
-        trainer_kwargs["tokenizer"] = tokenizer
-        trainer = Trainer(**trainer_kwargs)
-
-    resume_ckpt = args.resume_from_checkpoint.strip() if args.resume_from_checkpoint else ""
-    if resume_ckpt:
-        ckpt_path = Path(resume_ckpt)
-        if not ckpt_path.exists():
-            raise FileNotFoundError(f"resume_from_checkpoint path does not exist: {ckpt_path}")
-        trainer.train(resume_from_checkpoint=str(ckpt_path))
-    else:
-        trainer.train()
-    trainer.save_model(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
+    trainer = Trainer(model=model, args=targs, train_dataset=ds, data_collator=make_collator(tok, args.max_seq_length), tokenizer=tok)
+    trainer.train(resume_from_checkpoint=args.resume_from_checkpoint.strip() or None)
+    trainer.save_model(args.output_dir); tok.save_pretrained(args.output_dir)
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
