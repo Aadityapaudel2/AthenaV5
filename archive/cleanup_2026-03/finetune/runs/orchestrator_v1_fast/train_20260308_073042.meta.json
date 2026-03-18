@@ -1,8 +1,0 @@
-﻿{
-    "started_at":  "2026-03-08T07:30:42.2731927-04:00",
-    "args_file":  "D:\\AthenaPlayground\\AthenaV5\\Finetune\\orchestrator_v1_fast.json",
-    "transcript":  "D:\\AthenaPlayground\\AthenaV5\\Finetune\\runs\\orchestrator_v1_fast\\train_20260308_073042.log",
-    "mode":  "orchestrator_v1_fast",
-    "dry_run":  false,
-    "allow_cpu":  false
-}
